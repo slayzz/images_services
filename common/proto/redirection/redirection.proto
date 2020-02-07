@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+service Redirection {
+//    rpc ImageHandle (Image) returns (null) {}
+    rpc ImageHandle (Image) returns (ImageResponse) {}
+}
+
+message Image {
+    bytes image = 1;
+    string message = 2;
+}
+
+message ImageResponse {}
