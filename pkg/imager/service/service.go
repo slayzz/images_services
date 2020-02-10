@@ -5,19 +5,21 @@ import (
 	"errors"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/metrics"
+	"github.com/slayzz/images_services/pkg/forwarder/service"
 )
 
 type ImageService interface {
 	HandleImage(ctx context.Context, imageBytes []byte, message string) error
 }
 
-func New(logger log.Logger, imagesSize metrics.Counter) ImageService {
+func NewImagerService(logger log.Logger, imagesSize metrics.Counter, grpcClient service.ForwarderService) ImageService {
 	var svc ImageService
 	{
-		svc = NewImageService()
+		svc = &imageService{grpcClient: grpcClient}
 		svc = LoggingMiddleware(logger)(svc)
 		svc = InstrumentingMiddleware(imagesSize)(svc)
 	}
+
 	return svc
 }
 
@@ -27,21 +29,10 @@ var (
 	ErrMaxSizeExceeded = errors.New("result exceeds maximum size")
 )
 
-func NewImageService() ImageService {
-	return &imageService{}
+type imageService struct {
+	grpcClient service.ForwarderService
 }
 
-type imageService struct{}
-
 func (s *imageService) HandleImage(ctx context.Context, imageBytes []byte, message string) error {
-	//request := models.ImageRequest{
-	//	Image:   imageBytes,
-	//	Message: message,
-	//}
-
-	//_, err := i.grpcHandleImage(ctx, request)
-	//if err != nil {
-	//	return err
-	//}
-	return nil
+	return s.grpcClient.HandleImage(ctx, imageBytes, message)
 }

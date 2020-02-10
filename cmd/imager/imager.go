@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/go-kit/kit/log"
@@ -10,9 +11,12 @@ import (
 	stdopentracing "github.com/opentracing/opentracing-go"
 	stdprometheus "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	transport2 "github.com/slayzz/images_services/pkg/forwarder/transport"
 	"github.com/slayzz/images_services/pkg/imager/endpoint"
+	"github.com/slayzz/images_services/pkg/imager/externalserv"
 	"github.com/slayzz/images_services/pkg/imager/service"
 	"github.com/slayzz/images_services/pkg/imager/transport"
+	"google.golang.org/grpc"
 	"net"
 	"net/http"
 	"os"
@@ -26,6 +30,7 @@ func main() {
 	var (
 		debugPort = fs.String("debug-addr", ":9000", "debug-http-listen-address")
 		httpPort  = fs.String("http-addr", ":9001", "http-listen-address")
+		grpcPort  = fs.String("grpc-client-addr", ":10000", "grpc-client-address")
 	)
 	fs.Parse(os.Args[1:])
 
@@ -63,7 +68,14 @@ func main() {
 	}
 	http.DefaultServeMux.Handle("/metrics", promhttp.Handler())
 
-	svc := service.New(logger, imagesSize)
+	conn, err := grpc.Dial(*grpcPort, grpc.WithInsecure())
+	if err != nil {
+		logger.Log("error", err)
+		os.Exit(1)
+	}
+
+	grpcClient := transport2.NewGRPCForwarderClient(conn, tracer, logger)
+	svc := service.NewImagerService(logger, imagesSize, grpcClient)
 	endpoints := endpoint.NewImagerSet(svc, logger, duration)
 	httpHandler := transport.NewHTTPHandler(endpoints, tracer, logger)
 
@@ -97,6 +109,13 @@ func main() {
 	}
 
 	{
+		ctx := context.Background()
+		imageRequeser := externalserv.NewImageRequesterUnsplash()
+		imageGetterSvc := externalserv.NewImageGetterServiceImpl(logger, grpcClient, imageRequeser)
+		imageGetterSvc.Run(ctx)
+	}
+
+	{
 		// This function just sits and waits for ctrl-C.
 		cancelInterrupt := make(chan struct{})
 		g.Add(func() error {
@@ -112,5 +131,6 @@ func main() {
 			close(cancelInterrupt)
 		})
 	}
+
 	logger.Log("exit", g.Run())
 }

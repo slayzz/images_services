@@ -1,7 +1,7 @@
 syntax = "proto3";
 
-service Redirection {
-    rpc ImageHandle (Image) returns (ImageResponse) {}
+service Forwarder {
+    rpc HandleImage (Image) returns (ImageResponse) {}
 //    rpc ImageHandleStream(stream Image) returns (ImageResponse) {}
 }
 

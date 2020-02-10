@@ -6,10 +6,10 @@ import (
 	"github.com/go-kit/kit/log"
 	"github.com/oklog/oklog/pkg/group"
 	stdopentracing "github.com/opentracing/opentracing-go"
-	"github.com/slayzz/images_services/pb"
+	forwarder "github.com/slayzz/images_services/pb"
 	"github.com/slayzz/images_services/pkg/forwarder/endpoint"
-	"github.com/slayzz/images_services/pkg/forwarder/service"
 	"github.com/slayzz/images_services/pkg/forwarder/transport"
+	"github.com/slayzz/images_services/pkg/telegram/service"
 	"google.golang.org/grpc"
 	"net"
 	"os"
@@ -18,9 +18,9 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("redirection", flag.ExitOnError)
+	fs := flag.NewFlagSet("forwarder", flag.ExitOnError)
 	var (
-		grpcAddr = fs.String("grpc-addr", ":10000", "gRPC listen address")
+		serverPort = fs.String("port", ":11000", "gRPC listen address")
 	)
 	fs.Parse(os.Args[1:])
 
@@ -33,27 +33,27 @@ func main() {
 
 	var tracer stdopentracing.Tracer
 	{
-		tracer = stdopentracing.GlobalTracer() // no-op
+		tracer = stdopentracing.GlobalTracer()
 	}
 
 	var (
-		svc       = service.NewForwarderService()
+		svc       = service.NewTelegramService()
 		endpoints = endpoint.NewForwarderSet(svc, logger)
-		server    = transport.NewGRPCServer(endpoints, tracer, logger)
+		server    = transport.NewGRPCForwarderServer(endpoints, tracer, logger)
 	)
 
 	var g group.Group
 	{
-		grpcListener, err := net.Listen("tcp", *grpcAddr)
+		grpcListener, err := net.Listen("tcp", *serverPort)
 		if err != nil {
 			logger.Log("transport", "gRPC", "during", "Listen", "err", err)
 			os.Exit(1)
 		}
 
 		g.Add(func() error {
-			logger.Log("transport", "gRPC", "addr", *grpcAddr)
+			logger.Log("transport", "gRPC", "addr", *serverPort)
 			baseServer := grpc.NewServer()
-			pb.RegisterRedirectionServer(baseServer, server)
+			forwarder.RegisterForwarderServer(baseServer, server)
 			return baseServer.Serve(grpcListener)
 		}, func(error) {
 			grpcListener.Close()
@@ -61,7 +61,6 @@ func main() {
 	}
 
 	{
-		// This function just sits and waits for ctrl-C.
 		cancelInterrupt := make(chan struct{})
 		g.Add(func() error {
 			c := make(chan os.Signal, 1)
@@ -76,5 +75,6 @@ func main() {
 			close(cancelInterrupt)
 		})
 	}
+
 	logger.Log("exit", g.Run())
 }

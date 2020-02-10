@@ -12,7 +12,7 @@ import (
 	stdopentracing "github.com/opentracing/opentracing-go"
 	"github.com/slayzz/images_services/pb"
 	endpointpkg "github.com/slayzz/images_services/pkg/forwarder/endpoint"
-	"github.com/slayzz/images_services/pkg/imager/service"
+	"github.com/slayzz/images_services/pkg/forwarder/service"
 	"github.com/sony/gobreaker"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -20,16 +20,16 @@ import (
 )
 
 type grpcServer struct {
-	imageHandle grpctransport.Handler
+	handleImage grpctransport.Handler
 }
 
-func NewGRPCServer(e endpointpkg.Set, otTracer stdopentracing.Tracer, logger log.Logger) pb.RedirectionServer {
+func NewGRPCForwarderServer(e endpointpkg.Set, otTracer stdopentracing.Tracer, logger log.Logger) forwarder.ForwarderServer {
 	options := []grpctransport.ServerOption{
 		grpctransport.ServerErrorHandler(transport.NewLogErrorHandler(logger)),
 	}
 
 	return &grpcServer{
-		imageHandle: grpctransport.NewServer(
+		handleImage: grpctransport.NewServer(
 			e.HandleImageEndpoint,
 			decodeGRPCImageRequest,
 			encodeGRPCImageResponse,
@@ -38,15 +38,15 @@ func NewGRPCServer(e endpointpkg.Set, otTracer stdopentracing.Tracer, logger log
 	}
 }
 
-func (s *grpcServer) ImageHandle(ctx context.Context, req *pb.Image) (*pb.ImageResponse, error) {
-	_, rep, err := s.imageHandle.ServeGRPC(ctx, req)
+func (s *grpcServer) HandleImage(ctx context.Context, req *forwarder.Image) (*forwarder.ImageResponse, error) {
+	_, rep, err := s.handleImage.ServeGRPC(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return rep.(*pb.ImageResponse), nil
+	return rep.(*forwarder.ImageResponse), nil
 }
 
-func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, logger log.Logger) service.ImageService {
+func NewGRPCForwarderClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, logger log.Logger) service.ForwarderService {
 	limiter := ratelimit.NewErroringLimiter(rate.NewLimiter(rate.Every(time.Second), 100))
 
 	var options []grpctransport.ClientOption
@@ -55,16 +55,16 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, logger
 	{
 		imageHandleEndpoint = grpctransport.NewClient(
 			conn,
-			"Redirection",
+			"Forwarder",
 			"HandleImage",
 			encodeGRPCImageRequest,
 			decodeGRPCImageResponse,
-			pb.ImageResponse{},
+			forwarder.ImageResponse{},
 			append(options, grpctransport.ClientBefore(opentracing.ContextToGRPC(otTracer, logger)))...,
 		).Endpoint()
 		imageHandleEndpoint = limiter(imageHandleEndpoint)
 		imageHandleEndpoint = circuitbreaker.Gobreaker(gobreaker.NewCircuitBreaker(gobreaker.Settings{
-			Name:    "ImageHandle",
+			Name:    "HandleImage",
 			Timeout: 30 * time.Second,
 		}))(imageHandleEndpoint)
 	}
@@ -73,7 +73,7 @@ func NewGRPCClient(conn *grpc.ClientConn, otTracer stdopentracing.Tracer, logger
 }
 
 func decodeGRPCImageRequest(_ context.Context, grpcReq interface{}) (interface{}, error) {
-	req := grpcReq.(*pb.Image)
+	req := grpcReq.(*forwarder.Image)
 	return endpointpkg.Image{
 		Image: req.Image,
 		Msg:   req.Message,
@@ -86,12 +86,12 @@ func decodeGRPCImageResponse(_ context.Context, _ interface{}) (interface{}, err
 
 func encodeGRPCImageRequest(_ context.Context, response interface{}) (interface{}, error) {
 	resp := response.(endpointpkg.Image)
-	return &pb.Image{
+	return &forwarder.Image{
 		Image:   resp.Image,
 		Message: resp.Msg,
 	}, nil
 }
 
 func encodeGRPCImageResponse(_ context.Context, response interface{}) (interface{}, error) {
-	return &pb.ImageResponse{}, nil
+	return &forwarder.ImageResponse{}, nil
 }
